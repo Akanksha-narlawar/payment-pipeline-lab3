@@ -1,0 +1,110 @@
+pipeline {
+    agent any
+
+    options {
+        disableConcurrentBuilds()
+    }
+
+    environment {
+        IMAGE_NAME = "akanksha1822/payment"
+        IMAGE_TAG = "${BUILD_NUMBER}"
+        GIT_COMMIT_SHORT = ""
+    }
+
+    stages {
+
+        stage('Build') {
+            steps {
+                script {
+                    bat 'docker --version'
+
+                    bat """
+                        docker build ^
+                        --build-arg APP_VERSION=${BUILD_NUMBER} ^
+                        --build-arg GIT_COMMIT=${GIT_COMMIT} ^
+                        --build-arg BUILD_NUMBER=${BUILD_NUMBER} ^
+                        --build-arg BRANCH_NAME=${BRANCH_NAME} ^
+                        -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                    """
+                }
+            }
+        }
+
+        stage('Test') {
+            steps {
+                bat """
+                    docker run --rm ${IMAGE_NAME}:${IMAGE_TAG} pytest
+                """
+            }
+        }
+
+        stage('Tag') {
+            steps {
+                bat """
+                    docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:latest
+                """
+            }
+        }
+
+        stage('Push') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-credentials',
+                        usernameVariable: 'DOCKER_USERNAME',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )
+                ]) {
+                    bat """
+                        echo %DOCKER_PASSWORD% | docker login -u "%DOCKER_USERNAME%" --password-stdin
+                        docker push ${IMAGE_NAME}:${IMAGE_TAG}
+                        docker push ${IMAGE_NAME}:latest
+                    """
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                bat """
+                    docker stop payment || exit /b 0
+                    docker rm payment || exit /b 0
+
+                    docker run -d ^
+                      --name payment ^
+                      -p 8080:8080 ^
+                      ${IMAGE_NAME}:${IMAGE_TAG}
+                """
+
+                bat """
+                    echo.
+                    echo ===== DEPLOYMENT INFORMATION =====
+                    echo Application Version: ${BUILD_NUMBER}
+                    echo Git Commit: ${GIT_COMMIT}
+                    echo Branch: ${BRANCH_NAME}
+                    echo Docker Image: ${IMAGE_NAME}:${IMAGE_TAG}
+                    echo Jenkins Build: ${BUILD_NUMBER}
+                    echo ===================================
+                """
+            }
+        }
+    }
+
+    post {
+        always {
+            echo 'Lab 3 pipeline execution completed.'
+        }
+
+        success {
+            echo 'STATUS: Build, test, tag, push and deployment completed successfully.'
+        }
+
+        failure {
+            echo 'STATUS: Lab 3 pipeline failed.'
+        }
+
+        aborted {
+            echo 'STATUS: Lab 3 pipeline was aborted.'
+        }
+    }
+}
